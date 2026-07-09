@@ -64,3 +64,42 @@ def test_internal_error_is_clean_500(monkeypatch):
     assert body["error"] == "internal_error"
     assert "field" in body               # envelope contract holds on the 500 path too
     assert "secret internal detail" not in r.text   # no internal detail leaks
+
+
+def test_group_leakage_fail():
+    r = client.post("/audit", json={"split": {
+        "train_groups": ["a", "b", "c"], "test_groups": ["a", "b", "d"], "entity": "team"}})
+    by = {c["check"]: c for c in r.json()["checks"]}
+    assert by["group_leakage"]["status"] == "FAIL"
+
+
+def test_target_leakage_fail():
+    n = 60
+    labels = [i % 2 for i in range(n)]
+    leaky = [float(y) for y in labels]          # feature == label
+    r = client.post("/audit", json={"features": {"cols": {"leak": leaky}, "outcomes": labels}})
+    by = {c["check"]: c for c in r.json()["checks"]}
+    assert by["target_leakage"]["status"] == "FAIL"
+
+
+def test_calibration_runs_on_enough_rows():
+    # 100 well-separated, well-calibrated points -> calibration runs (PASS or WARN, not SKIPPED)
+    preds = [0.05] * 50 + [0.95] * 50
+    outs = [0] * 50 + [1] * 50
+    r = client.post("/audit", json={"predictions": {"predicted": preds, "outcomes": outs}})
+    by = {c["check"]: c for c in r.json()["checks"]}
+    assert by["calibration_bias"]["status"] in {"PASS", "WARN"}
+
+
+def test_full_multi_block_request():
+    r = client.post("/audit", json={
+        "target": "model_x",
+        "split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+        "metrics": {"in_sample": 0.99, "holdout": 0.74},
+    })
+    body = r.json()
+    assert body["target"] == "model_x"
+    assert body["verdict"] == "NOT_TRUSTWORTHY"  # overfit FAIL dominates
+    by = {c["check"]: c for c in body["checks"]}
+    assert by["temporal_leakage"]["status"] == "PASS"
+    assert by["overfit_flags"]["status"] == "FAIL"
