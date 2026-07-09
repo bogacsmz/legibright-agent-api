@@ -88,6 +88,9 @@ def root() -> dict:
         "checks": _CHECKS,
         "example_request": _EXAMPLE_BODY,
         "example_curl": _EXAMPLE_CURL,
+        "trust_note": "verdict requires no probed failure across ≥2 independent input blocks "
+                      "(split/predictions/features/metrics); TRUSTWORTHY means no leakage/overfit/"
+                      "calibration failure was found, not that a model is useful. See docs/VERIFICATION.md.",
     }
 
 
