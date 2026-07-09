@@ -61,3 +61,14 @@ def test_feature_column_length_mismatch_raises():
     with pytest.raises(InvalidInput) as ei:
         run_audit(AuditRequest(**{"features": {"cols": {"f1": [1, 2, 3]}, "outcomes": [1, 0]}}))
     assert ei.value.field.startswith("features")
+
+
+def test_single_warn_is_inconclusive_score_60():
+    # 10 rows (<50) -> calibration_bias WARN (not certified); it's the only check that runs
+    r = run_audit(AuditRequest(**{"predictions": {"predicted": [0.1] * 10, "outcomes": [0, 1] * 5}}))
+    by = _by_check(r)
+    assert by["calibration_bias"].status == "WARN"
+    assert [c.status for c in r.checks if c.check != "calibration_bias"] == ["SKIPPED"] * 4
+    assert r.verdict == "INCONCLUSIVE"
+    assert r.trust_score == 60
+    assert r.counts["warn"] == 1
