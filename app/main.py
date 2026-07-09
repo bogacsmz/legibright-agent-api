@@ -1,13 +1,17 @@
 """Trust Audit API — stateless, agent-callable statistical-honesty auditor."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .audit import run_audit
 from .errors import InvalidInput
 from .schemas import AuditRequest, AuditResponse
+
+_SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
 
 app = FastAPI(
     title="Trust Audit API",
@@ -92,6 +96,15 @@ def root() -> dict:
                       "(split/predictions/features/metrics); TRUSTWORTHY means no leakage/overfit/"
                       "calibration failure was found, not that a model is useful. See docs/VERIFICATION.md.",
     }
+
+
+@app.get("/skill.md")
+def skill_md() -> PlainTextResponse:
+    try:
+        return PlainTextResponse(
+            _SKILL_MD.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+    except OSError:
+        return PlainTextResponse("SKILL.md not found", status_code=404)
 
 
 @app.post("/audit", response_model=AuditResponse)

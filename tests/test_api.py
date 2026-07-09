@@ -104,3 +104,13 @@ def test_full_multi_block_request():
     by = {c["check"]: c for c in body["checks"]}
     assert by["temporal_leakage"]["status"] == "PASS"
     assert by["overfit_flags"]["status"] == "FAIL"
+
+
+def test_skill_md_served():
+    r = client.get("/skill.md")
+    assert r.status_code == 200
+    assert "text/markdown" in r.headers["content-type"]
+    body = r.text
+    assert body.startswith("# Legibright Trust Audit")
+    assert "https://web-production-710f9.up.railway.app" in body
+    assert "How the agent should use this" in body
