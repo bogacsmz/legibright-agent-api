@@ -192,14 +192,19 @@ service-level (block absent, or the check declined for too-little-data with a `r
 ## 8. Dependencies
 
 **Runtime (pinned, minimal):** `fastapi`, `uvicorn[standard]`, `pydantic`.
-**Dev/test (pinned):** `pytest`, `httpx` (FastAPI `TestClient`).
+**Dev/test (pinned):** `pytest`, `httpx` (FastAPI `TestClient`), `scipy` (parity test ONLY).
 
-**scipy is intentionally omitted.** `calibration_bias` uses scipy's exact chi-square
-survival function when available and otherwise a Wilson-Hilferty normal approximation that
-ships in the same file. Dropping scipy keeps deps minimal and Docker builds fast (the
-original rule), at the cost of negligible differences in calibration p-values near the
-0.01/0.05 thresholds — the material-ECE gate dominates, so verdicts hold. Documented as an
-optional add for exact Legibright parity.
+**scipy is omitted from runtime — replaced by a correct pure-Python chi-square.** The one
+deliberate deviation from copy-verbatim is `calibration_bias._chi2_sf`: instead of scipy +
+the crude Wilson-Hilferty fallback, it computes the exact chi-square survival function
+`chi2.sf(x, df) = Q(df/2, x/2)` (regularized upper incomplete gamma) in pure Python via a
+series expansion for the lower branch and a Lentz continued fraction for the upper branch
+(Numerical Recipes `gammq`), matching scipy to ~machine precision. This keeps runtime deps
+minimal and Docker builds fast (the original rule) with **no** loss of calibration accuracy.
+
+scipy is a **test-only** dependency: a parity test asserts the pure-Python `_chi2_sf`
+matches `scipy.stats.chi2.sf` across a grid of `(x, df)` values within tolerance. Runtime
+never imports scipy.
 
 Exact version pins are finalized at build against the local Python and captured in
 `requirements.txt` / `requirements-dev.txt`.
@@ -217,6 +222,9 @@ Exact version pins are finalized at build against the local Python and captured 
   missing `outcomes`, non-numeric value).
 - Malformed JSON / wrong type → 400 (remapped from 422).
 - `GET /health` and `GET /` smoke tests.
+- **Chi-square parity:** pure-Python `_chi2_sf(x, df)` vs `scipy.stats.chi2.sf(x, df)` over a
+  grid (df ∈ {1..12}, x ∈ {0, 0.5, 1, 2, ... up to ~40}), asserting agreement to ≤1e-9
+  absolute (with a relative check in the deep upper tail). scipy imported test-only.
 
 ## 10. Deploy
 
