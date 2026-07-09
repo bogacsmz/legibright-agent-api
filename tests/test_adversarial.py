@@ -150,8 +150,9 @@ def test_split_block_cannot_self_certify():
 
 
 def test_two_distinct_blocks_still_reach_trustworthy():
-    # green must remain reachable when evidence comes from >=2 DIFFERENT input blocks
-    b = _post({"split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+    # green must remain reachable when evidence comes from >=2 DIFFERENT input blocks on real data
+    b = _post({"split": {"train_ts": [float(i) for i in range(25)],
+                          "test_ts": [float(i) for i in range(100, 125)]},
                "metrics": {"in_sample": 0.79, "holdout": 0.57}}).json()
     assert b["verdict"] == "TRUSTWORTHY"
     assert b["trust_score"] == 100
@@ -194,3 +195,27 @@ def test_no_holdout_real_redflag_still_fires():
     of = {c["check"]: c for c in b["checks"]}["overfit_flags"]
     assert of["status"] in ("WARN", "FAIL"), of
     assert b["verdict"] != "TRUSTWORTHY"
+
+
+def test_tiny_clean_split_does_not_count_as_evidence():
+    # a clean cut on 3 timestamps + a real overfit pass must NOT reach green (split is below floor)
+    b = _post({"split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+               "metrics": {"in_sample": 0.79, "holdout": 0.57}}).json()
+    by = {c["check"]: c for c in b["checks"]}
+    assert by["temporal_leakage"]["status"] == "SKIPPED"
+    assert b["verdict"] == "INCONCLUSIVE"
+    assert b["trust_score"] <= 70
+
+
+def test_perfect_on_both_is_flagged_not_certified():
+    # near-perfect on BOTH train and holdout = leakage signature -> WARN, never green
+    for m in ({"in_sample": 1.0, "holdout": 1.0}, {"in_sample": 0.99, "holdout": 0.995}):
+        b = _post({"metrics": m}).json()
+        of = {c["check"]: c for c in b["checks"]}["overfit_flags"]
+        assert of["status"] == "WARN", (m, of)
+        assert b["verdict"] == "INCONCLUSIVE"
+    # and it cannot be laundered into green by adding a real clean split
+    b = _post({"split": {"train_ts": [float(i) for i in range(25)],
+                          "test_ts": [float(i) for i in range(100, 125)]},
+               "metrics": {"in_sample": 1.0, "holdout": 1.0}}).json()
+    assert b["verdict"] != "TRUSTWORTHY"  # overfit WARN -> INCONCLUSIVE

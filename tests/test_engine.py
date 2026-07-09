@@ -39,9 +39,10 @@ def test_single_clean_check_is_inconclusive_not_trustworthy():
 
 
 def test_two_clean_checks_are_trustworthy():
-    # >=2 independent clean checks -> TRUSTWORTHY/100 (green is still reachable with real coverage)
+    # >=2 independent clean checks on SUFFICIENT data -> TRUSTWORTHY/100
     r = run_audit(AuditRequest(**{
-        "split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+        "split": {"train_ts": [float(i) for i in range(25)],
+                   "test_ts": [float(i) for i in range(100, 125)]},
         "metrics": {"in_sample": 0.79, "holdout": 0.57}}))
     by = _by_check(r)
     assert by["temporal_leakage"].status == "PASS"

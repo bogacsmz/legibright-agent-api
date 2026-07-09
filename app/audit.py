@@ -21,6 +21,9 @@ MAX_ARRAY_LEN = 100_000
 MAX_FEATURE_COLUMNS = 1_000
 MAX_FEATURE_CELLS = 2_000_000
 _ECE_CEILING = 0.03  # = calibration_bias.ece_material; never certify OK above the material floor
+MIN_SPLIT_ROWS = 20       # temporal: a clean cut on fewer points is not evidence
+MIN_GROUP_ENTITIES = 8    # group: too few distinct entities can't certify "no overlap"
+_NEAR_PERFECT_BOTH = 0.99  # near-perfect on BOTH train & holdout = leakage signature
 
 _STATUS = {Severity.OK: "PASS", Severity.WARN: "WARN", Severity.FAIL: "FAIL"}
 
@@ -164,7 +167,14 @@ def run_audit(req: AuditRequest) -> AuditResponse:
         if not s.train_ts or not s.test_ts:
             cr, fn = _skip("temporal_leakage", "temporal split arrays are empty — nothing to test")
         else:
-            cr, fn = _ran(TemporalLeakageCheck().run(train_ts=s.train_ts, test_ts=s.test_ts))
+            finding = TemporalLeakageCheck().run(train_ts=s.train_ts, test_ts=s.test_ts)
+            if finding.severity is Severity.OK and (
+                    len(s.train_ts) < MIN_SPLIT_ROWS or len(s.test_ts) < MIN_SPLIT_ROWS):
+                cr, fn = _skip("temporal_leakage",
+                               f"too few timestamps to certify a clean split (need ≥{MIN_SPLIT_ROWS} "
+                               "per side) — a clean cut on tiny data is not evidence")
+            else:
+                cr, fn = _ran(finding)
     else:
         cr, fn = _skip("temporal_leakage", "no `split.train_ts`/`split.test_ts` provided")
     results.append(cr)
@@ -176,8 +186,16 @@ def run_audit(req: AuditRequest) -> AuditResponse:
         if not s.train_groups or not s.test_groups:
             cr, fn = _skip("group_leakage", "group arrays are empty — nothing to test")
         else:
-            cr, fn = _ran(GroupLeakageCheck().run(
-                train_groups=s.train_groups, test_groups=s.test_groups, entity=s.entity))
+            finding = GroupLeakageCheck().run(
+                train_groups=s.train_groups, test_groups=s.test_groups, entity=s.entity)
+            if finding.severity is Severity.OK and (
+                    len(set(s.train_groups)) < MIN_GROUP_ENTITIES
+                    or len(set(s.test_groups)) < MIN_GROUP_ENTITIES):
+                cr, fn = _skip("group_leakage",
+                               f"too few distinct entities to certify no overlap "
+                               f"(need ≥{MIN_GROUP_ENTITIES} per side)")
+            else:
+                cr, fn = _ran(finding)
     else:
         cr, fn = _skip("group_leakage", "no `split.train_groups`/`split.test_groups` provided")
     results.append(cr)
@@ -232,6 +250,13 @@ def run_audit(req: AuditRequest) -> AuditResponse:
             cr, fn = _skip("overfit_flags",
                            "overfit cannot certify generalization without a holdout — "
                            "in_sample alone is not out-of-sample evidence")
+        elif (finding.severity is Severity.OK and m.bounded and m.holdout is not None
+              and m.in_sample >= _NEAR_PERFECT_BOTH and m.holdout >= _NEAR_PERFECT_BOTH):
+            cr, fn = _ran(Finding(
+                finding.check, Severity.WARN,
+                f"near-perfect on BOTH train ({m.in_sample:.3f}) and holdout ({m.holdout:.3f}) — "
+                "implausible without leakage; a gap-based check cannot certify this clean",
+                detail=finding.detail, metrics=finding.metrics, suggested_tags=["audit-warn"]))
         else:
             cr, fn = _ran(finding)
     else:

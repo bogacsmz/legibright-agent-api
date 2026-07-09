@@ -94,7 +94,8 @@ def test_calibration_runs_on_enough_rows():
 def test_full_multi_block_request():
     r = client.post("/audit", json={
         "target": "model_x",
-        "split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+        "split": {"train_ts": [float(i) for i in range(25)],
+                   "test_ts": [float(i) for i in range(100, 125)]},
         "metrics": {"in_sample": 0.99, "holdout": 0.74},
     })
     body = r.json()
