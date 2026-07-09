@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class SplitBlock(BaseModel):
@@ -39,6 +39,13 @@ class MetricsBlock(BaseModel):
     bounded: bool = True
     abs_alarm: float | None = None
     metric: str = "score"
+
+    @field_validator("in_sample", "holdout", "abs_alarm", mode="before")
+    @classmethod
+    def _reject_bool(cls, v):
+        if isinstance(v, bool):
+            raise ValueError("must be a number, not a boolean")
+        return v
 
 
 class AuditRequest(BaseModel):

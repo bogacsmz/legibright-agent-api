@@ -29,9 +29,22 @@ def test_minimal_metrics_overfit_fail():
     assert 0 <= r.trust_score <= 40
 
 
-def test_honest_overfit_pass_trustworthy():
+def test_single_clean_check_is_inconclusive_not_trustworthy():
+    # coverage-gating: one clean overfit check is NOT enough to certify trust (4 dims untested)
     r = run_audit(AuditRequest(**{"metrics": {"in_sample": 0.79, "holdout": 0.57}}))
     by = _by_check(r)
+    assert by["overfit_flags"].status == "PASS"
+    assert r.verdict == "INCONCLUSIVE"
+    assert r.trust_score == 60
+
+
+def test_two_clean_checks_are_trustworthy():
+    # >=2 independent clean checks -> TRUSTWORTHY/100 (green is still reachable with real coverage)
+    r = run_audit(AuditRequest(**{
+        "split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+        "metrics": {"in_sample": 0.79, "holdout": 0.57}}))
+    by = _by_check(r)
+    assert by["temporal_leakage"].status == "PASS"
     assert by["overfit_flags"].status == "PASS"
     assert r.verdict == "TRUSTWORTHY"
     assert r.trust_score == 100

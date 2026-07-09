@@ -6,6 +6,8 @@ computed over the checks that RAN only. SKIPPED = the input block is absent.
 """
 from __future__ import annotations
 
+import math
+
 from .checks.base import Finding, Severity
 from .checks.calibration_bias import CalibrationBiasCheck
 from .checks.group_leakage import GroupLeakageCheck
@@ -15,7 +17,25 @@ from .checks.temporal_leakage import TemporalLeakageCheck
 from .errors import InvalidInput
 from .schemas import AuditRequest, AuditResponse, CheckResult
 
+MAX_ARRAY_LEN = 100_000
+MAX_FEATURE_COLUMNS = 1_000
+MAX_FEATURE_CELLS = 2_000_000
+_ECE_CEILING = 0.10
+
 _STATUS = {Severity.OK: "PASS", Severity.WARN: "WARN", Severity.FAIL: "FAIL"}
+
+
+def _require_len(name: str, values) -> None:
+    if len(values) > MAX_ARRAY_LEN:
+        raise InvalidInput(
+            f"{name} has {len(values)} items, exceeding the {MAX_ARRAY_LEN}-element limit.", field=name)
+
+
+def _require_finite(name: str, values) -> None:
+    for i, v in enumerate(values):
+        if not math.isfinite(v):
+            raise InvalidInput(
+                f"{name} contains a non-finite value (NaN/Infinity) at index {i}.", field=name)
 
 
 def _validate(req: AuditRequest) -> None:
@@ -27,37 +47,77 @@ def _validate(req: AuditRequest) -> None:
             raise InvalidInput(
                 f"split.{missing} is required when its counterpart is provided — "
                 "temporal leakage needs both train_ts and test_ts.",
-                field=f"split.{missing}",
-            )
+                field=f"split.{missing}")
         if (s.train_groups is None) != (s.test_groups is None):
             missing = "test_groups" if s.train_groups is not None else "train_groups"
             raise InvalidInput(
                 f"split.{missing} is required when its counterpart is provided — "
                 "group leakage needs both train_groups and test_groups.",
-                field=f"split.{missing}",
-            )
+                field=f"split.{missing}")
+        for nm, arr in (("split.train_ts", s.train_ts), ("split.test_ts", s.test_ts)):
+            if arr is not None:
+                _require_len(nm, arr)
+                _require_finite(nm, arr)
+        for nm, arr in (("split.train_groups", s.train_groups), ("split.test_groups", s.test_groups)):
+            if arr is not None:
+                _require_len(nm, arr)
 
     p = req.predictions
-    if p is not None and len(p.predicted) != len(p.outcomes):
-        raise InvalidInput(
-            f"predictions.predicted has {len(p.predicted)} items but predictions.outcomes "
-            f"has {len(p.outcomes)} — they must be equal length.",
-            field="predictions.outcomes",
-        )
+    if p is not None:
+        if len(p.predicted) != len(p.outcomes):
+            raise InvalidInput(
+                f"predictions.predicted has {len(p.predicted)} items but predictions.outcomes "
+                f"has {len(p.outcomes)} — they must be equal length.",
+                field="predictions.outcomes")
+        _require_len("predictions.predicted", p.predicted)
+        _require_finite("predictions.predicted", p.predicted)
+        for i, v in enumerate(p.predicted):
+            if not (0.0 <= v <= 1.0):
+                raise InvalidInput(
+                    f"predictions.predicted[{i}]={v} is outside [0,1] — "
+                    "predicted probabilities must be in [0,1].",
+                    field="predictions.predicted")
+        for i, v in enumerate(p.outcomes):
+            if v not in (0, 1):
+                raise InvalidInput(
+                    f"predictions.outcomes[{i}]={v} is not 0 or 1 — outcomes must be binary labels.",
+                    field="predictions.outcomes")
 
     f = req.features
     if f is not None:
         if not f.cols:
+            raise InvalidInput("features.cols must contain at least one column.", field="features.cols")
+        if len(f.cols) > MAX_FEATURE_COLUMNS:
             raise InvalidInput(
-                "features.cols must contain at least one column.", field="features.cols"
-            )
+                f"features.cols has {len(f.cols)} columns, exceeding the "
+                f"{MAX_FEATURE_COLUMNS}-column limit.", field="features.cols")
+        total = 0
         for name, vals in f.cols.items():
             if len(vals) != len(f.outcomes):
                 raise InvalidInput(
                     f"features.cols['{name}'] has {len(vals)} items but features.outcomes "
                     f"has {len(f.outcomes)} — every column must match outcomes length.",
-                    field=f"features.cols.{name}",
-                )
+                    field=f"features.cols.{name}")
+            _require_finite(f"features.cols.{name}", vals)
+            total += len(vals)
+        if total > MAX_FEATURE_CELLS:
+            raise InvalidInput(
+                f"features has {total} total cells, exceeding the {MAX_FEATURE_CELLS}-cell limit.",
+                field="features.cols")
+        for i, v in enumerate(f.outcomes):
+            if v not in (0, 1):
+                raise InvalidInput(
+                    f"features.outcomes[{i}]={v} is not 0 or 1 — outcomes must be binary labels.",
+                    field="features.outcomes")
+
+    m = req.metrics
+    if m is not None:
+        for nm, v in (("metrics.in_sample", m.in_sample),
+                      ("metrics.holdout", m.holdout),
+                      ("metrics.abs_alarm", m.abs_alarm)):
+            if v is not None and not math.isfinite(v):
+                raise InvalidInput(
+                    f"{nm} is non-finite (NaN/Infinity) — must be a finite number.", field=nm)
 
 
 def _skip(check: str, reason: str) -> tuple[CheckResult, None]:
@@ -75,6 +135,21 @@ def _ran(finding: Finding) -> tuple[CheckResult, Finding]:
         ),
         finding,
     )
+
+
+def _enforce_ece_ceiling(finding: Finding) -> Finding:
+    """Honesty gate: a large ECE must never be certified OK, even when Hosmer-Lemeshow is
+    non-significant (underpowered at small n). Downgrade OK→WARN so 'well calibrated' is
+    never printed alongside a materially large calibration error."""
+    if finding.severity is Severity.OK:
+        ece = finding.metrics.get("ece")
+        if ece is not None and ece >= _ECE_CEILING:
+            return Finding(
+                finding.check, Severity.WARN,
+                f"calibration uncertain — ECE {ece:.3f} ≥ {_ECE_CEILING} yet HL not significant "
+                f"(likely underpowered); NOT certified well-calibrated",
+                detail=finding.detail, metrics=finding.metrics, suggested_tags=["audit-warn"])
+    return finding
 
 
 def run_audit(req: AuditRequest) -> AuditResponse:
@@ -128,7 +203,16 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     # 4. calibration_bias
     p = req.predictions
     if p is not None:
-        cr, fn = _ran(CalibrationBiasCheck().run(predicted=p.predicted, outcomes=p.outcomes))
+        if not p.predicted:
+            cr, fn = _skip("calibration_bias", "predictions arrays are empty — nothing to calibrate")
+        elif len(set(p.outcomes)) < 2:
+            cr, fn = _skip("calibration_bias",
+                           "calibration needs both outcome classes (0 and 1) present — "
+                           "cannot certify from a single class")
+        else:
+            finding = _enforce_ece_ceiling(
+                CalibrationBiasCheck().run(predicted=p.predicted, outcomes=p.outcomes))
+            cr, fn = _ran(finding)
     else:
         cr, fn = _skip("calibration_bias", "no `predictions` block provided")
     results.append(cr)
@@ -138,9 +222,14 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     # 5. overfit_flags
     m = req.metrics
     if m is not None:
-        cr, fn = _ran(OverfitFlagsCheck().run(
-            in_sample=m.in_sample, holdout=m.holdout, n_cells_scanned=m.n_cells_scanned,
-            bounded=m.bounded, abs_alarm=m.abs_alarm, metric=m.metric))
+        if m.holdout is None and m.abs_alarm is None and m.n_cells_scanned <= 1:
+            cr, fn = _skip("overfit_flags",
+                           "overfit needs a holdout to compare (or abs_alarm / n_cells_scanned>1) — "
+                           "in_sample alone cannot reveal overfitting")
+        else:
+            cr, fn = _ran(OverfitFlagsCheck().run(
+                in_sample=m.in_sample, holdout=m.holdout, n_cells_scanned=m.n_cells_scanned,
+                bounded=m.bounded, abs_alarm=m.abs_alarm, metric=m.metric))
     else:
         cr, fn = _skip("overfit_flags", "no `metrics` block provided")
     results.append(cr)
@@ -171,7 +260,11 @@ def _verdict(findings: list[Finding]) -> str:
         return "NOT_TRUSTWORTHY"
     if any(f.severity is Severity.WARN for f in findings):
         return "INCONCLUSIVE"
-    return "TRUSTWORTHY"
+    # all ran-checks passed: certifying TRUSTWORTHY needs evidence from >=2 independent dimensions.
+    # a single clean check is partial evidence, not trust ("absence of evidence → never green").
+    if len(findings) >= 2:
+        return "TRUSTWORTHY"
+    return "INCONCLUSIVE"
 
 
 def _trust_score(findings: list[Finding]) -> int:
@@ -183,7 +276,10 @@ def _trust_score(findings: list[Finding]) -> int:
         return max(0, 40 - 12 * (fails - 1) - 3 * warns)
     if warns:
         return max(45, 70 - 10 * warns)
-    return 100
+    # all passed
+    if len(findings) >= 2:
+        return 100
+    return 60  # single clean check — partial evidence, stays in the INCONCLUSIVE band
 
 
 _PHRASE = {
@@ -205,5 +301,10 @@ def _summary(counts: dict[str, int], verdict: str) -> str:
         parts.append(f"{counts['skipped']} skipped")
     ran = counts["pass"] + counts["warn"] + counts["fail"]
     lead = ", ".join(parts) if parts else "no checks"
-    tail = "no checks ran" if ran == 0 else _PHRASE[verdict]
+    if ran == 0:
+        tail = "no checks ran"
+    elif verdict == "INCONCLUSIVE" and counts["fail"] == 0 and counts["warn"] == 0:
+        tail = f"only {ran} of 5 checks could run — insufficient coverage to certify trust"
+    else:
+        tail = _PHRASE[verdict]
     return f"{lead} — {tail}."
