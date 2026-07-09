@@ -72,3 +72,47 @@ def test_single_warn_is_inconclusive_score_60():
     assert r.verdict == "INCONCLUSIVE"
     assert r.trust_score == 60
     assert r.counts["warn"] == 1
+
+
+def test_empty_temporal_split_is_skipped_not_green():
+    r = run_audit(AuditRequest(**{"split": {"train_ts": [], "test_ts": []}}))
+    by = _by_check(r)
+    assert by["temporal_leakage"].status == "SKIPPED"
+    assert "empty" in by["temporal_leakage"].reason
+    assert r.verdict == "INCONCLUSIVE"
+    assert r.trust_score == 50
+
+
+def test_empty_group_arrays_is_skipped_not_green():
+    r = run_audit(AuditRequest(**{"split": {"train_groups": [], "test_groups": []}}))
+    by = _by_check(r)
+    assert by["group_leakage"].status == "SKIPPED"
+    assert r.verdict == "INCONCLUSIVE"
+    assert r.trust_score == 50
+
+
+def test_thin_features_target_leakage_skipped_not_green():
+    # 20 rows (<30) -> cannot certify -> SKIPPED, never a green PASS
+    r = run_audit(AuditRequest(**{"features": {
+        "cols": {"f1": [float(i) for i in range(20)]},
+        "outcomes": [i % 2 for i in range(20)]}}))
+    by = _by_check(r)
+    assert by["target_leakage"].status == "SKIPPED"
+    assert r.verdict == "INCONCLUSIVE"
+
+
+def test_single_class_features_target_leakage_skipped():
+    # 40 rows but all one class -> no label variation -> SKIPPED
+    r = run_audit(AuditRequest(**{"features": {
+        "cols": {"f1": [float(i) for i in range(40)]},
+        "outcomes": [0] * 40}}))
+    assert _by_check(r)["target_leakage"].status == "SKIPPED"
+
+
+def test_valid_full_data_target_leakage_still_runs():
+    # regression: a proper request (60 rows, both classes, leaky feature) must still RUN and FAIL,
+    # proving the guard doesn't over-skip real data
+    labels = [i % 2 for i in range(60)]
+    r = run_audit(AuditRequest(**{"features": {
+        "cols": {"leak": [float(v) for v in labels]}, "outcomes": labels}}))
+    assert _by_check(r)["target_leakage"].status == "FAIL"

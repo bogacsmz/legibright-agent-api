@@ -86,7 +86,10 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     # 1. temporal_leakage
     s = req.split
     if s is not None and s.train_ts is not None and s.test_ts is not None:
-        cr, fn = _ran(TemporalLeakageCheck().run(train_ts=s.train_ts, test_ts=s.test_ts))
+        if not s.train_ts or not s.test_ts:
+            cr, fn = _skip("temporal_leakage", "temporal split arrays are empty — nothing to test")
+        else:
+            cr, fn = _ran(TemporalLeakageCheck().run(train_ts=s.train_ts, test_ts=s.test_ts))
     else:
         cr, fn = _skip("temporal_leakage", "no `split.train_ts`/`split.test_ts` provided")
     results.append(cr)
@@ -95,8 +98,11 @@ def run_audit(req: AuditRequest) -> AuditResponse:
 
     # 2. group_leakage
     if s is not None and s.train_groups is not None and s.test_groups is not None:
-        cr, fn = _ran(GroupLeakageCheck().run(
-            train_groups=s.train_groups, test_groups=s.test_groups, entity=s.entity))
+        if not s.train_groups or not s.test_groups:
+            cr, fn = _skip("group_leakage", "group arrays are empty — nothing to test")
+        else:
+            cr, fn = _ran(GroupLeakageCheck().run(
+                train_groups=s.train_groups, test_groups=s.test_groups, entity=s.entity))
     else:
         cr, fn = _skip("group_leakage", "no `split.train_groups`/`split.test_groups` provided")
     results.append(cr)
@@ -106,7 +112,13 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     # 3. target_leakage
     f = req.features
     if f is not None:
-        cr, fn = _ran(TargetLeakageCheck().run(features=f.cols, outcomes=f.outcomes))
+        y = f.outcomes
+        pos = sum(1 for v in y if v == 1)
+        if len(y) < 30 or pos == 0 or pos == len(y):
+            cr, fn = _skip("target_leakage",
+                           "target leakage needs ≥30 rows with both label classes present — cannot certify")
+        else:
+            cr, fn = _ran(TargetLeakageCheck().run(features=f.cols, outcomes=f.outcomes))
     else:
         cr, fn = _skip("target_leakage", "no `features` block provided")
     results.append(cr)
