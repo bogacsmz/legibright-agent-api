@@ -51,6 +51,7 @@ class AuditRequest(BaseModel):
 
 
 class CheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     check: str
     status: str  # PASS | WARN | FAIL | SKIPPED
     headline: str | None = None
@@ -60,6 +61,7 @@ class CheckResult(BaseModel):
 
 
 class AuditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     target: str
     trust_score: int
     verdict: str
