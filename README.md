@@ -1,6 +1,28 @@
 # Trust Audit API
 
+[![live service](https://img.shields.io/website?url=https%3A%2F%2Fweb-production-710f9.up.railway.app%2Fhealth&label=live%20service&up_message=up&down_message=down)](https://web-production-710f9.up.railway.app/health)
+[![agent skill](https://img.shields.io/badge/skill.md-reachable-blue)](https://web-production-710f9.up.railway.app/skill.md)
+[![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+
 Stateless statistical-honesty auditor for ML models and backtests: leakage, overfit, and calibration checks over any subset of `{split, predictions, features, metrics}`, returned as a single `trust_score` (0-100) + `verdict`.
+
+## Live demo
+
+Base URL: **https://web-production-710f9.up.railway.app** &nbsp;·&nbsp; liveness: [`/health`](https://web-production-710f9.up.railway.app/health) &nbsp;·&nbsp; agent skill doc: [`/skill.md`](https://web-production-710f9.up.railway.app/skill.md)
+
+Audit a backtest whose train/test timestamps overlap (data leakage) — against the live service:
+
+```bash
+curl -sX POST https://web-production-710f9.up.railway.app/audit \
+  -H 'content-type: application/json' \
+  -d '{"target":"backtest_v2","split":{"train_ts":[1,2,3],"test_ts":[2,3,4]}}'
+```
+
+```
+verdict:  NOT_TRUSTWORTHY   (trust_score 40)
+summary:  1 failed, 4 skipped — not trustworthy.
+temporal_leakage: FAIL — TEMPORAL LEAKAGE — training data overlaps the test period
+```
 
 ## Quickstart
 
