@@ -68,7 +68,8 @@ async def _unexpected_handler(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=500,
         content={"error": "internal_error",
-                 "message": "an internal error occurred while auditing"},
+                 "message": "an internal error occurred while auditing",
+                 "field": None},
     )
 
 

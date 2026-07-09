@@ -50,3 +50,17 @@ def test_wrong_type_remapped_to_400():
 def test_unknown_field_is_400():
     r = client.post("/audit", json={"bogus": 1})
     assert r.status_code == 400
+
+
+def test_internal_error_is_clean_500(monkeypatch):
+    from app import main
+    def boom(req):
+        raise RuntimeError("secret internal detail")
+    monkeypatch.setattr(main, "run_audit", boom)
+    local = TestClient(app, raise_server_exceptions=False)
+    r = local.post("/audit", json={"metrics": {"in_sample": 0.9}})
+    assert r.status_code == 500
+    body = r.json()
+    assert body["error"] == "internal_error"
+    assert "field" in body               # envelope contract holds on the 500 path too
+    assert "secret internal detail" not in r.text   # no internal detail leaks
