@@ -116,3 +116,13 @@ def test_valid_full_data_target_leakage_still_runs():
     r = run_audit(AuditRequest(**{"features": {
         "cols": {"leak": [float(v) for v in labels]}, "outcomes": labels}}))
     assert _by_check(r)["target_leakage"].status == "FAIL"
+
+
+def test_asymmetric_empty_group_arrays_skipped_not_trivial_green():
+    # train_groups empty but test_groups present: an empty train set can't certify "no overlap",
+    # so the engine SKIPs rather than returning a trivial green PASS.
+    r = run_audit(AuditRequest(**{"split": {"train_groups": [], "test_groups": ["a", "b"]}}))
+    by = _by_check(r)
+    assert by["group_leakage"].status == "SKIPPED"
+    assert r.verdict == "INCONCLUSIVE"
+    assert r.trust_score == 50
