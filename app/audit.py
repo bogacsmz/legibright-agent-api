@@ -222,14 +222,18 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     # 5. overfit_flags
     m = req.metrics
     if m is not None:
-        if m.holdout is None and m.abs_alarm is None and m.n_cells_scanned <= 1:
+        finding = OverfitFlagsCheck().run(
+            in_sample=m.in_sample, holdout=m.holdout, n_cells_scanned=m.n_cells_scanned,
+            bounded=m.bounded, abs_alarm=m.abs_alarm, metric=m.metric)
+        if m.holdout is None and finding.severity is Severity.OK:
+            # No holdout ⇒ no out-of-sample evidence. A clean run here only means "no other red
+            # flag fired" (abs_alarm / multiple-testing), NOT that the model generalizes. It must
+            # never count as a passing dimension. (abs_alarm/n_cells can still WARN/FAIL below.)
             cr, fn = _skip("overfit_flags",
-                           "overfit needs a holdout to compare (or abs_alarm / n_cells_scanned>1) — "
-                           "in_sample alone cannot reveal overfitting")
+                           "overfit cannot certify generalization without a holdout — "
+                           "in_sample alone is not out-of-sample evidence")
         else:
-            cr, fn = _ran(OverfitFlagsCheck().run(
-                in_sample=m.in_sample, holdout=m.holdout, n_cells_scanned=m.n_cells_scanned,
-                bounded=m.bounded, abs_alarm=m.abs_alarm, metric=m.metric))
+            cr, fn = _ran(finding)
     else:
         cr, fn = _skip("overfit_flags", "no `metrics` block provided")
     results.append(cr)

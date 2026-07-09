@@ -167,3 +167,30 @@ def test_calibration_never_passes_above_material_ece():
         if ece >= 0.03:
             assert cal["status"] in ("WARN", "FAIL"), (pred, ece, cal["status"])
             assert "well calibrated" not in (cal["headline"] or ""), (pred, cal["headline"])
+
+
+def test_no_holdout_overfit_never_certifies():
+    # overfit OK without a holdout must NOT count as evidence — no param trick may reach green
+    for m in (
+        {"in_sample": 1.0, "n_cells_scanned": 2},       # n_cells below the ~44 flag threshold
+        {"in_sample": 0.99, "abs_alarm": 2.0},           # abs_alarm set but not tripped
+        {"in_sample": 1.0},                               # bare
+        {"in_sample": -5.0, "n_cells_scanned": 10},
+    ):
+        b = _post({"metrics": m}).json()
+        of = {c["check"]: c for c in b["checks"]}["overfit_flags"]
+        assert of["status"] == "SKIPPED", (m, of)
+        assert b["verdict"] == "INCONCLUSIVE", (m, b["verdict"])
+    # and it can't be laundered into green by pairing with a clean split block
+    for m in ({"in_sample": 1.0, "n_cells_scanned": 2}, {"in_sample": 0.99, "abs_alarm": 2.0}):
+        b = _post({"split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]}, "metrics": m}).json()
+        assert b["verdict"] != "TRUSTWORTHY", (m, b["verdict"])
+        assert b["trust_score"] <= 70, (m, b["trust_score"])
+
+
+def test_no_holdout_real_redflag_still_fires():
+    # a genuine no-holdout red flag (many cells scanned) must still be reported, not skipped
+    b = _post({"metrics": {"in_sample": 0.9, "n_cells_scanned": 100}}).json()
+    of = {c["check"]: c for c in b["checks"]}["overfit_flags"]
+    assert of["status"] in ("WARN", "FAIL"), of
+    assert b["verdict"] != "TRUSTWORTHY"
