@@ -219,3 +219,13 @@ def test_perfect_on_both_is_flagged_not_certified():
                           "test_ts": [float(i) for i in range(100, 125)]},
                "metrics": {"in_sample": 1.0, "holdout": 1.0}}).json()
     assert b["verdict"] != "TRUSTWORTHY"  # overfit WARN -> INCONCLUSIVE
+
+
+def test_padded_duplicate_timestamps_do_not_count_as_evidence():
+    # 20 IDENTICAL timestamps/side carry no more temporal evidence than 3 points -> must not count
+    b = _post({"split": {"train_ts": [1.0] * 20, "test_ts": [2.0] * 20},
+               "metrics": {"in_sample": 0.8, "holdout": 0.79}}).json()
+    by = {c["check"]: c for c in b["checks"]}
+    assert by["temporal_leakage"]["status"] == "SKIPPED"
+    assert b["verdict"] != "TRUSTWORTHY"
+    assert b["trust_score"] <= 70

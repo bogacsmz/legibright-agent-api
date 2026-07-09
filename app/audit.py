@@ -169,10 +169,11 @@ def run_audit(req: AuditRequest) -> AuditResponse:
         else:
             finding = TemporalLeakageCheck().run(train_ts=s.train_ts, test_ts=s.test_ts)
             if finding.severity is Severity.OK and (
-                    len(s.train_ts) < MIN_SPLIT_ROWS or len(s.test_ts) < MIN_SPLIT_ROWS):
+                    len(set(s.train_ts)) < MIN_SPLIT_ROWS or len(set(s.test_ts)) < MIN_SPLIT_ROWS):
                 cr, fn = _skip("temporal_leakage",
-                               f"too few timestamps to certify a clean split (need ≥{MIN_SPLIT_ROWS} "
-                               "per side) — a clean cut on tiny data is not evidence")
+                               f"too few distinct timestamps to certify a clean split (need "
+                               f"≥{MIN_SPLIT_ROWS} per side) — a clean cut on tiny/padded data is "
+                               "not evidence")
             else:
                 cr, fn = _ran(finding)
     else:
