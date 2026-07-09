@@ -217,13 +217,13 @@ docker run -d -p 8010:8000 --name ta trust-audit-api
 curl -s http://localhost:8010/health
 ```
 
-**Procfile** (Railway, Render, Heroku-style platforms — reads `$PORT` from the environment):
+**Procfile** (Railway, Render, Heroku-style platforms):
 
 ```
-web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+web: python -m app.main
 ```
 
-The container/process listens on `$PORT` (defaults to `8000` if unset) and exposes `GET /health` for platform healthchecks.
+The entrypoint reads `PORT` from the environment in Python and binds `0.0.0.0:$PORT` (defaulting to `8000` if unset), so the start command carries no shell-expanded `$PORT` — it launches identically whether the platform runs it through a shell or not. The container/process exposes `GET /health` for platform healthchecks.
 
 ## License
 
