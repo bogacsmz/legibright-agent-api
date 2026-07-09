@@ -13,6 +13,7 @@ Distilled from betting pipelines where multiplicative de-vig inflated longshots.
 """
 from __future__ import annotations
 
+import math
 from typing import Sequence
 
 from .base import Check, Finding, Severity
@@ -129,15 +130,63 @@ def _hosmer_lemeshow(bins, n):
 
 
 def _chi2_sf(x, df):
-    try:
-        from scipy.stats import chi2
+    """Exact chi-square upper-tail survival function, pure Python.
 
-        return float(chi2.sf(x, df))
-    except Exception:
-        import math
+    chi2.sf(x, df) == Q(df/2, x/2), the regularized upper incomplete gamma.
+    Matches the reference chi2 survival function to ~machine precision.
+    Pure Python, no third-party stats library at runtime.
+    """
+    if x <= 0:
+        return 1.0
+    return _gammq(df / 2.0, x / 2.0)
 
-        # crude fallback: Wilson-Hilferty normal approximation to chi-square upper tail
-        if x <= 0:
-            return 1.0
-        t = ((x / df) ** (1 / 3) - (1 - 2 / (9 * df))) / math.sqrt(2 / (9 * df))
-        return 0.5 * math.erfc(t / math.sqrt(2))
+
+def _gammq(a, x):
+    """Regularized upper incomplete gamma Q(a, x) (Numerical Recipes gammq)."""
+    if x < 0.0 or a <= 0.0:
+        raise ValueError("bad args to _gammq")
+    if x == 0.0:
+        return 1.0
+    if x < a + 1.0:
+        return 1.0 - _gser(a, x)          # lower branch via series
+    return _gcf(a, x)                     # upper branch via continued fraction
+
+
+def _gser(a, x):
+    """Lower regularized incomplete gamma P(a, x) via series expansion."""
+    gln = math.lgamma(a)
+    ap = a
+    total = 1.0 / a
+    delta = total
+    for _ in range(1000):
+        ap += 1.0
+        delta *= x / ap
+        total += delta
+        if abs(delta) < abs(total) * 1e-16:
+            break
+    return total * math.exp(-x + a * math.log(x) - gln)
+
+
+def _gcf(a, x):
+    """Upper regularized incomplete gamma Q(a, x) via the Lentz continued fraction."""
+    gln = math.lgamma(a)
+    tiny = 1e-30
+    b = x + 1.0 - a
+    c = 1.0 / tiny
+    d = 1.0 / b
+    h = d
+    for i in range(1, 1000):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        if abs(d) < tiny:
+            d = tiny
+        c = b + an / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-16:
+            break
+    return math.exp(-x + a * math.log(x) - gln) * h
