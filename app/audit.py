@@ -20,7 +20,7 @@ from .schemas import AuditRequest, AuditResponse, CheckResult
 MAX_ARRAY_LEN = 100_000
 MAX_FEATURE_COLUMNS = 1_000
 MAX_FEATURE_CELLS = 2_000_000
-_ECE_CEILING = 0.10
+_ECE_CEILING = 0.03  # = calibration_bias.ece_material; never certify OK above the material floor
 
 _STATUS = {Severity.OK: "PASS", Severity.WARN: "WARN", Severity.FAIL: "FAIL"}
 
@@ -253,6 +253,21 @@ def run_audit(req: AuditRequest) -> AuditResponse:
     )
 
 
+_CHECK_BLOCK = {
+    "temporal_leakage": "split",
+    "group_leakage": "split",
+    "target_leakage": "features",
+    "calibration_bias": "predictions",
+    "overfit_flags": "metrics",
+}
+
+
+def _passing_blocks(findings: list[Finding]) -> set[str]:
+    """Distinct INPUT BLOCKS that produced a passing (OK) finding. temporal+group both map to
+    `split`, so one split block is a single evidence source, not two."""
+    return {_CHECK_BLOCK[f.check] for f in findings if f.severity is Severity.OK}
+
+
 def _verdict(findings: list[Finding]) -> str:
     if not findings:
         return "INCONCLUSIVE"
@@ -260,9 +275,10 @@ def _verdict(findings: list[Finding]) -> str:
         return "NOT_TRUSTWORTHY"
     if any(f.severity is Severity.WARN for f in findings):
         return "INCONCLUSIVE"
-    # all ran-checks passed: certifying TRUSTWORTHY needs evidence from >=2 independent dimensions.
-    # a single clean check is partial evidence, not trust ("absence of evidence → never green").
-    if len(findings) >= 2:
+    # all ran-checks passed: certifying trust needs corroboration from >=2 INDEPENDENT input
+    # blocks (a single input source — e.g. `split`, which drives both temporal & group — is
+    # not enough). "absence of evidence → never green."
+    if len(_passing_blocks(findings)) >= 2:
         return "TRUSTWORTHY"
     return "INCONCLUSIVE"
 
@@ -277,9 +293,9 @@ def _trust_score(findings: list[Finding]) -> int:
     if warns:
         return max(45, 70 - 10 * warns)
     # all passed
-    if len(findings) >= 2:
+    if len(_passing_blocks(findings)) >= 2:
         return 100
-    return 60  # single clean check — partial evidence, stays in the INCONCLUSIVE band
+    return 60  # passing evidence from a single input block — INCONCLUSIVE band
 
 
 _PHRASE = {
@@ -304,7 +320,7 @@ def _summary(counts: dict[str, int], verdict: str) -> str:
     if ran == 0:
         tail = "no checks ran"
     elif verdict == "INCONCLUSIVE" and counts["fail"] == 0 and counts["warn"] == 0:
-        tail = f"only {ran} of 5 checks could run — insufficient coverage to certify trust"
+        tail = "insufficient coverage to certify trust (need passing checks from ≥2 independent inputs)"
     else:
         tail = _PHRASE[verdict]
     return f"{lead} — {tail}."

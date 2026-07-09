@@ -40,7 +40,7 @@ class MetricsBlock(BaseModel):
     abs_alarm: float | None = None
     metric: str = "score"
 
-    @field_validator("in_sample", "holdout", "abs_alarm", mode="before")
+    @field_validator("in_sample", "holdout", "abs_alarm", "n_cells_scanned", mode="before")
     @classmethod
     def _reject_bool(cls, v):
         if isinstance(v, bool):

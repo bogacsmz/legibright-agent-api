@@ -120,6 +120,7 @@ def test_degenerate_battery_never_green():
         {"predictions": {"predicted": [0.9] * 60, "outcomes": [1] * 60}},
         {"predictions": {"predicted": [0.3] * 50, "outcomes": [i % 2 for i in range(50)]}},
         {},
+        {"split": {"train_ts": [1], "test_ts": [2], "train_groups": ["a"], "test_groups": ["b"]}},
     ]
     for body in battery:
         b = _post(body).json()
@@ -134,3 +135,35 @@ def test_determinism_same_input_same_result():
                           "outcomes": [i % 2 for i in range(60)]}}
     seen = {(_post(body).json()["verdict"], _post(body).json()["trust_score"]) for _ in range(5)}
     assert len(seen) == 1
+
+
+def test_split_block_cannot_self_certify():
+    # temporal + group both come from the ONE split block; two OKs from one input is NOT coverage
+    for split in (
+        {"train_ts": [1], "test_ts": [2], "train_groups": ["a"], "test_groups": ["b"]},        # reviewer repro
+        {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6],
+         "train_groups": ["a", "b", "c"], "test_groups": ["d", "e", "f"]},                       # both PASS
+    ):
+        b = _post({"split": split}).json()
+        assert b["verdict"] != "TRUSTWORTHY", (split, b["verdict"])
+        assert b["trust_score"] <= 70, (split, b["trust_score"])
+
+
+def test_two_distinct_blocks_still_reach_trustworthy():
+    # green must remain reachable when evidence comes from >=2 DIFFERENT input blocks
+    b = _post({"split": {"train_ts": [1, 2, 3], "test_ts": [4, 5, 6]},
+               "metrics": {"in_sample": 0.79, "holdout": 0.57}}).json()
+    assert b["verdict"] == "TRUSTWORTHY"
+    assert b["trust_score"] == 100
+
+
+def test_calibration_never_passes_above_material_ece():
+    # invariant: an OK/PASS calibration is never certified when ECE >= 0.03 (material floor)
+    for pred in (0.30, 0.35, 0.40, 0.45):
+        b = _post({"predictions": {"predicted": [pred] * 80,
+                                    "outcomes": [i % 2 for i in range(80)]}}).json()
+        cal = {c["check"]: c for c in b["checks"]}["calibration_bias"]
+        ece = (cal.get("metrics") or {}).get("ece", 0.0)
+        if ece >= 0.03:
+            assert cal["status"] in ("WARN", "FAIL"), (pred, ece, cal["status"])
+            assert "well calibrated" not in (cal["headline"] or ""), (pred, cal["headline"])
