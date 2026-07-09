@@ -97,3 +97,18 @@ def root() -> dict:
 @app.post("/audit", response_model=AuditResponse)
 def audit(req: AuditRequest) -> AuditResponse:
     return run_audit(req)
+
+
+def main() -> None:
+    """Entrypoint that reads $PORT from the environment itself, so the start command
+    carries no shell-expanded `$PORT` (works identically under Docker, a Procfile, or
+    a bare `python -m app.main`)."""
+    import os
+
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+
+
+if __name__ == "__main__":
+    main()
