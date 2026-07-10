@@ -75,3 +75,32 @@ class AuditResponse(BaseModel):
     summary: str
     counts: dict[str, int]
     checks: list[CheckResult]
+    certificate: dict[str, Any] | None = None
+
+
+class VerifyRequest(BaseModel):
+    """Request body for POST /verify: POST the certificate object exactly as
+    it appeared in an /audit response's `certificate` field, e.g.
+    {"claim": {...}, "content_id": "...", "signature": "...",
+     "algorithm": "Ed25519", "public_key": "...", "key_id": "..."}.
+
+    Every field is optional here on purpose: a malformed/forged/incomplete
+    certificate is a normal *answer* (valid: false), not a request error, so
+    we don't let pydantic 400 on a missing/odd field — verify_certificate()
+    does its own defensive validation and always returns a verdict. Extra
+    fields are allowed so a caller can pass a certificate through unmodified
+    even if it carries additional metadata."""
+    model_config = ConfigDict(extra="allow")
+    claim: dict[str, Any] | None = None
+    content_id: str | None = None
+    signature: str | None = None
+    algorithm: str | None = None
+    public_key: str | None = None
+    key_id: str | None = None
+
+
+class VerifyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    valid: bool
+    reason: str
+    claim: dict[str, Any] | None = None

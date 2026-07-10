@@ -141,6 +141,7 @@ Response fields:
 - `summary`: one human-readable line.
 - `counts`: number of checks by status.
 - `checks`: always all five (`temporal_leakage`, `group_leakage`, `target_leakage`, `calibration_bias`, `overfit_flags`), each `PASS` / `WARN` / `FAIL` / `SKIPPED`, with `headline`, `detail`, `metrics`, or a `reason` when skipped. The exact `headline`/`detail` wording varies by which trigger fired (e.g. overfit reports "memorization" vs "holdout collapse"); branch your logic on `status` and `verdict`, not on matching a `detail` string.
+- `certificate`: an Ed25519-signed, portable attestation of this verdict (see **POST /verify** below). Carry it to another agent as tamper-evident proof of what Legibright returned, without re-running the audit.
 
 Errors: a malformed body — probability outside [0,1], mismatched `predicted`/`outcomes` lengths, an unknown field, or a wrong-typed value — returns HTTP 400 with `{"error","message","field"}`. Example:
 
@@ -158,6 +159,28 @@ curl -sX POST https://web-production-710f9.up.railway.app/audit \
 
 An absent block is not an error — it is `SKIPPED`. An empty body `{}` returns HTTP 200 with everything `SKIPPED` and verdict `INCONCLUSIVE`.
 
+## POST /verify
+
+Checks a certificate offline — proves a Legibright verdict is genuine and untampered without re-running the audit. Every `/audit` response carries a `certificate`: an Ed25519 signature over a `claim` (verdict, trust_score, counts, and a `input_sha256` digest of the audited input). Another agent can hand you that certificate and you confirm it here; a passing verify means *this exact verdict was really issued by this service for that exact input*, so you can trust it without trusting the messenger.
+
+Take the `certificate` object from any `/audit` response and POST it back verbatim:
+
+```
+curl -sX POST https://web-production-710f9.up.railway.app/verify \
+  -H 'content-type: application/json' \
+  -d '{"claim":{"schema":"legibright-trust-cert/1","issuer":"legibright-trust-audit","target":"unnamed","verdict":"NOT_TRUSTWORTHY","trust_score":40,"counts":{"pass":0,"warn":0,"fail":1,"skipped":4},"input_sha256":"4786dce9...febe6","issued_at":"2026-07-10T01:21:18.675103+00:00"},"content_id":"67969bd25dfbd672","signature":"989752ae...e6001","algorithm":"Ed25519","public_key":"853ca0434a4c5f0104b702a3fe1a0eefa4c2a3bc3270a775e6ec2b40bc0ce3b6","key_id":"4053a588709103f2"}'
+```
+
+Genuine certificate:
+
+```json
+{"valid": true, "reason": "genuine, untampered Legibright certificate", "claim": { "...": "the verified claim" }}
+```
+
+If anyone alters the claim (e.g. flips `verdict` to `TRUSTWORTHY`) or signs it with a different key, verification fails with `valid: false` and a reason (`"signature does not match claim (tampered or corrupt)"` or `"unknown signer — not issued by this service"`). A failed verify is a normal HTTP 200 answer, not an error. The issuer's public key is also published at `GET /` (`public_key`, `signature_algorithm: Ed25519`) so verification is possible entirely offline.
+
+A `TRUSTWORTHY` certificate attests only that no failure was found across ≥ 2 independent evidence blocks — it is not a claim that the underlying model is accurate or profitable.
+
 ## The one rule that decides the verdict
 
 `TRUSTWORTHY` is only returned when **passing** checks come from **at least two** of the four blocks (`split`, `predictions`, `features`, `metrics`). A single clean block returns `INCONCLUSIVE`, not `TRUSTWORTHY` — for example `{"metrics":{"in_sample":0.82,"holdout":0.79}}` alone returns `INCONCLUSIVE` (trust_score 60) with the summary "insufficient coverage to certify trust (need passing checks from ≥2 independent inputs)." To earn `TRUSTWORTHY`, send at least two blocks, as in the clean-model example above.
@@ -173,3 +196,4 @@ An absent block is not an error — it is `SKIPPED`. An empty body `{}` returns 
 4. **If you receive HTTP 400,** the body was malformed — read `message` and `field`, fix that one field, and resend. A 400 is not a verdict.
 5. **Interpret `TRUSTWORTHY` precisely:** it means no leakage, overfitting, or miscalibration was found in the evidence you supplied — *not* that the model is accurate or profitable. To probe more dimensions, add `predictions` (real probabilities) and `features`.
 6. **To gate an action in one call,** combine blocks: e.g. `{"metrics":{...},"split":{...}}` audits overfitting and leakage together and can reach `TRUSTWORTHY` in a single request, giving you a single boolean gate for an escrow, payment, or hand-off.
+7. **Pass on proof, not just a claim.** The `certificate` in your `/audit` response is a signed, portable attestation of the verdict. Hand it to a downstream agent instead of asking them to re-audit or take your word; they confirm it at `POST /verify` (`valid: true`) and know the verdict is genuine and untampered — the attestation choke-point for agent-to-agent trust.

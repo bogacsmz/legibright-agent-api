@@ -8,8 +8,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .audit import run_audit
+from .certificate import KEY_ID, PUBLIC_KEY_HEX, issue_certificate, verify_certificate
 from .errors import InvalidInput
-from .schemas import AuditRequest, AuditResponse
+from .schemas import AuditRequest, AuditResponse, VerifyRequest, VerifyResponse
 
 _SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
 
@@ -97,6 +98,15 @@ def root() -> dict:
         "trust_note": "verdict requires no probed failure across ≥2 independent input blocks "
                       "(split/predictions/features/metrics); TRUSTWORTHY means no leakage/overfit/"
                       "calibration failure was found, not that a model is useful. See docs/VERIFICATION.md.",
+        "public_key": PUBLIC_KEY_HEX,
+        "key_id": KEY_ID,
+        "signature_algorithm": "Ed25519",
+        "certificate_note": "every /audit response carries an Ed25519-signed, portable trust "
+                            "certificate (field `certificate`) that any agent can carry and verify "
+                            "offline — without re-running the audit — via POST /verify. A "
+                            "TRUSTWORTHY certificate attests that no failure was found across ≥2 "
+                            "independent evidence blocks; it is not a claim that the underlying "
+                            "model is good.",
     }
 
 
@@ -111,7 +121,18 @@ def skill_md() -> PlainTextResponse:
 
 @app.post("/audit", response_model=AuditResponse)
 def audit(req: AuditRequest) -> AuditResponse:
-    return run_audit(req)
+    resp = run_audit(req)
+    resp.certificate = issue_certificate(req, resp)
+    return resp
+
+
+@app.post("/verify", response_model=VerifyResponse)
+def verify(req: VerifyRequest) -> VerifyResponse:
+    """Verify a portable trust certificate offline (no re-audit). A bad,
+    forged, or tampered certificate is a normal answer — HTTP 200 with
+    valid: false — not a 400/500."""
+    result = verify_certificate(req.model_dump())
+    return VerifyResponse(**result)
 
 
 def main() -> None:
