@@ -86,7 +86,7 @@ Audits the evidence you supply and returns a trust verdict. The JSON body has an
 Input blocks (send one or more):
 
 - `metrics`: `in_sample` (required number) plus optional `holdout`, `n_cells_scanned`, `bounded`, `abs_alarm`, `metric`. Runs overfit-flag detection. A holdout is needed to certify generalization — `in_sample` alone can only be `SKIPPED`, never `PASS`. Overfit `FAIL` fires when the in-sample→holdout gap exceeds **0.25** (collapse, at any level) or `in_sample` is **≥ 0.95** on a bounded metric (memorization); a moderate gap on a non-near-perfect score passes.
-- `split`: `train_ts` + `test_ts` (numeric timestamps) run temporal-leakage; `train_groups` + `test_groups` (entity ids) run group-leakage. Each pair is required together. Clean checks need enough distinct values (temporal ≥ 20 per side, groups ≥ 8 per side).
+- `split`: `train_ts` + `test_ts` (numeric timestamps) run temporal-leakage; `train_groups` + `test_groups` (entity ids) run group-leakage. Each pair is required together. A genuine leak `FAIL`s at any size; the distinct-value floors (temporal ≥ 20 per side, groups ≥ 8 per side) gate only the clean `PASS` — below them a clean-looking split is `SKIPPED`, not certified.
 - `predictions`: `predicted` (probabilities in [0,1]) + `outcomes` (0/1 labels, equal length) run calibration. Calibration needs **≥ 50 rows** to certify; with fewer, calibration returns `WARN` (verdict `INCONCLUSIVE`), never `PASS`.
 - `features`: `cols` (map of column name → numeric list) + `outcomes` (0/1) run target-leakage.
 - `target`: optional string label, echoed back in the response.
@@ -162,6 +162,8 @@ An absent block is not an error — it is `SKIPPED`. An empty body `{}` returns 
 ## POST /verify
 
 Checks a certificate offline — proves a Legibright verdict is genuine and untampered without re-running the audit. Every `/audit` response carries a `certificate`: an Ed25519 signature over a `claim` (verdict, trust_score, counts, and a `input_sha256` digest of the audited input). Another agent can hand you that certificate and you confirm it here; a passing verify means *this exact verdict was really issued by this service for that exact input*, so you can trust it without trusting the messenger.
+
+(`content_id` is a short content-address — a hash of the input digest + verdict — naming this exact result; treat it as opaque and forward the whole certificate verbatim, no field needs independent validation.)
 
 Take the `certificate` object from any `/audit` response and POST it back verbatim:
 

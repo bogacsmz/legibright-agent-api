@@ -97,7 +97,7 @@ def root() -> dict:
         "example_curl": _EXAMPLE_CURL,
         "trust_note": "verdict requires no probed failure across ≥2 independent input blocks "
                       "(split/predictions/features/metrics); TRUSTWORTHY means no leakage/overfit/"
-                      "calibration failure was found, not that a model is useful. See docs/VERIFICATION.md.",
+                      "calibration failure was found, not that a model is useful.",
         "public_key": PUBLIC_KEY_HEX,
         "key_id": KEY_ID,
         "signature_algorithm": "Ed25519",
