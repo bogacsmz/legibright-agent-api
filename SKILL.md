@@ -13,6 +13,8 @@ No auth, no API keys, no session, no setup. POST the evidence behind a claim as 
 - **Scenario 1 — Peer claim verification.** Another agent, a human, or a data vendor hands you a quantitative claim ("my model is 97% accurate", "this strategy returned 2.1x", "confidence 0.9"). Before you act on it, forward the evidence behind the claim (a train/test split, predictions, features, or the headline metrics) to `/audit`. A `NOT_TRUSTWORTHY` verdict is a named, concrete reason the number is inflated (leakage / memorization / miscalibration); `TRUSTWORTHY` means no such defect was found across ≥ 2 independent kinds of evidence.
 - **Scenario 2 — Action gating (composability).** Gate an escrow release, a payment, a task hand-off, or a model deployment on the verdict: proceed on `TRUSTWORTHY`, hold and request more evidence on `INCONCLUSIVE`, refuse on `NOT_TRUSTWORTHY`. The verdict is a small JSON object, so it drops into any agent's control flow as a single boolean gate.
 
+It audits the **claim, not the claimant.** Reputation and on-chain attestation systems score an agent's *history* ("is this agent generally reputable?"); Legibright inspects the *evidence behind one specific number* right now. So a reputable agent's overfit or cherry-picked result is still caught, and a brand-new agent's honest result is still certified — it complements reputation systems rather than replacing them, and needs no identity, stake, or track record.
+
 ## Quick start (one call, copy-paste, succeeds immediately)
 
 Audit a backtest's in-sample-vs-holdout score. This is a complete, successful call — nothing else is required:
@@ -85,7 +87,13 @@ Audits the evidence you supply and returns a trust verdict. The JSON body has an
 
 Input blocks (send one or more):
 
-- `metrics`: `in_sample` (required number) plus optional `holdout`, `n_cells_scanned`, `bounded`, `abs_alarm`, `metric`. Runs overfit-flag detection. A holdout is needed to certify generalization — `in_sample` alone can only be `SKIPPED`, never `PASS`. Overfit `FAIL` fires when the in-sample→holdout gap exceeds **0.25** (collapse, at any level) or `in_sample` is **≥ 0.95** on a bounded metric (memorization); a moderate gap on a non-near-perfect score passes.
+- `metrics`: `in_sample` (required number) plus optional `holdout`, `n_cells_scanned`, `bounded`, `abs_alarm`, `metric`. Runs overfit-flag detection. A holdout is needed to certify generalization — `in_sample` alone can only be `SKIPPED`, never `PASS`. The check flags (`WARN` or `FAIL` → not certified) when a reported score does not hold up:
+  - **Holdout collapse / memorization:** a real train→holdout gap fails. A clear collapse (e.g. `0.99→0.74`) `FAIL`s; a near-perfect in-sample (≥ 0.95) `FAIL`s even on a smaller gap (~0.10+, e.g. `0.96→0.85`); a strong model with a small honest gap passes (`0.98→0.97` → `PASS`).
+  - **Too-good-on-both-sides:** near-perfect on train *and* holdout (e.g. `0.99/0.99`) → `WARN` — implausible without leakage.
+  - **Cherry-picking / multiple testing:** set `n_cells_scanned` to how many models/configs/strategies were tried before reporting this one. Scanning many and reporting only the winner (e.g. `n_cells_scanned: 50`) triggers a multiple-comparisons `WARN` — the honest way to disclose "I tried N and kept the best."
+  - **Unbounded metrics** (ROI, Sharpe, PnL — not in [0,1]): set `bounded: false` and optionally `abs_alarm` to an absolute floor; a holdout falling below it (e.g. ROI going negative) `FAIL`s. `metric` is a free-text label; `bounded` defaults to `true` (scores in [0,1] like accuracy/AUC/R²).
+
+  Do not try to predict `FAIL` vs `WARN` vs `PASS` from the numbers — read the `verdict`/`status`; any non-`PASS` means "not certified."
 - `split`: `train_ts` + `test_ts` (numeric timestamps) run temporal-leakage; `train_groups` + `test_groups` (entity ids) run group-leakage. Each pair is required together. A genuine leak `FAIL`s at any size; the distinct-value floors (temporal ≥ 20 per side, groups ≥ 8 per side) gate only the clean `PASS` — below them a clean-looking split is `SKIPPED`, not certified.
 - `predictions`: `predicted` (probabilities in [0,1]) + `outcomes` (0/1 labels, equal length) run calibration. Calibration needs **≥ 50 rows** to certify; with fewer, calibration returns `WARN` (verdict `INCONCLUSIVE`), never `PASS`.
 - `features`: `cols` (map of column name → numeric list) + `outcomes` (0/1) run target-leakage.
@@ -195,7 +203,7 @@ A `TRUSTWORTHY` certificate attests only that no failure was found across ≥ 2 
    - `NOT_TRUSTWORTHY` → refuse: do **not** rely on the claim; open the failing check's `headline`/`detail` for the exact named defect and report it back to the claimant.
    - `INCONCLUSIVE` → hold: the evidence is insufficient to certify trust. If you sent a single block, add a second block (see the rule above) and retry; otherwise treat the claim as unverified.
    - `TRUSTWORTHY` → proceed: no probed failure fired across ≥ 2 independent dimensions. Safe to act, with the caveat in step 5.
-4. **If you receive HTTP 400,** the body was malformed — read `message` and `field`, fix that one field, and resend. A 400 is not a verdict.
+4. **If you receive HTTP 400,** the body was malformed — read `message` and `field`, fix that one field (supply a valid value — e.g. a probability back inside [0,1]), and resend. A 400 is not a verdict.
 5. **Interpret `TRUSTWORTHY` precisely:** it means no leakage, overfitting, or miscalibration was found in the evidence you supplied — *not* that the model is accurate or profitable. To probe more dimensions, add `predictions` (real probabilities) and `features`.
 6. **To gate an action in one call,** combine blocks: e.g. `{"metrics":{...},"split":{...}}` audits overfitting and leakage together and can reach `TRUSTWORTHY` in a single request, giving you a single boolean gate for an escrow, payment, or hand-off.
 7. **Pass on proof, not just a claim.** The `certificate` in your `/audit` response is a signed, portable attestation of the verdict. Hand it to a downstream agent instead of asking them to re-audit or take your word; they confirm it at `POST /verify` (`valid: true`) and know the verdict is genuine and untampered — the attestation choke-point for agent-to-agent trust.
