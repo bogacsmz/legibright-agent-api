@@ -191,9 +191,27 @@ If anyone alters the claim (e.g. flips `verdict` to `TRUSTWORTHY`) or signs it w
 
 A `TRUSTWORTHY` certificate attests only that no failure was found across ≥ 2 independent evidence blocks — it is not a claim that the underlying model is accurate or profitable.
 
+## Audit once, present everywhere
+
+A verdict is portable, so you audit a claim once and reuse the result everywhere. One `POST /audit` call returns a content-addressed, Ed25519-signed `certificate`; any number of downstream agents can validate it **without re-running the audit** — either by POSTing it to `POST /verify`, or entirely offline by checking the Ed25519 signature against the public key published at `GET /`. The same certificate travels through an escrow contract, a task hand-off, or a marketplace listing, and each consumer confirms it independently — one audit, N verifications.
+
+What a passing `/verify` proves is bounded to exactly what it checks: that this precise `claim` (its `verdict`, `trust_score`, and `input_sha256`) was signed by *this* service's key (a different key → `"unknown signer"`) and has not been altered since it was issued (any edit → `"signature does not match claim"`). It does **not** re-audit and does **not** attest the model is good — only that this verdict was genuinely issued here, over that exact input, untampered. That signed verdict is the reusable, transferable unit of agent-to-agent trust: audit once, present everywhere.
+
 ## The one rule that decides the verdict
 
 `TRUSTWORTHY` is only returned when **passing** checks come from **at least two** of the four blocks (`split`, `predictions`, `features`, `metrics`). A single clean block returns `INCONCLUSIVE`, not `TRUSTWORTHY` — for example `{"metrics":{"in_sample":0.82,"holdout":0.79}}` alone returns `INCONCLUSIVE` (trust_score 60) with the summary "insufficient coverage to certify trust (need passing checks from ≥2 independent inputs)." To earn `TRUSTWORTHY`, send at least two blocks, as in the clean-model example above.
+
+## Verdict → recommended action
+
+The verdict is advice for *you*, the calling agent — Legibright holds no funds, signs no contract, and takes no action of its own. It tells you only what the supplied evidence supports; you decide the next step. Map the verdict to your own control flow:
+
+| Verdict | What it means | Recommended action for the calling agent |
+|---|---|---|
+| `TRUSTWORTHY` | No leakage, overfit, or calibration failure was found across ≥ 2 independent evidence blocks. | **Proceed** with the transaction or hand-off — accept the claim, release the escrow, continue — subject to the precise reading in step 5 below (it certifies the *honesty of the number*, not that the model is accurate or profitable). |
+| `INCONCLUSIVE` | The evidence is too thin to certify — only one block passed, or a check warned. | **Do not proceed on faith.** Request specific additional evidence from the counterparty, then re-audit: an out-of-sample / holdout block, a second independent evidence block (`predictions`, or a `split`), or how many configs were scanned (`n_cells_scanned`). |
+| `NOT_TRUSTWORTHY` | A check failed — a named, concrete defect (leakage / memorization / miscalibration). | **Reject or renegotiate.** Treat the claim as unsupported; open the failing check's `headline`/`detail` for the exact defect and send it back to the claimant. |
+
+The rule that keeps this honest: **`INCONCLUSIVE` is not a weak `TRUSTWORTHY`.** It means "insufficient evidence," and the correct response is to *obtain more evidence and re-audit* — never to proceed as though the claim were verified. An `INCONCLUSIVE` never turns into `TRUSTWORTHY` without new evidence.
 
 ## How the agent should use this
 
