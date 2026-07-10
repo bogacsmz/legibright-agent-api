@@ -86,6 +86,8 @@ def health() -> dict:
 def root() -> dict:
     return {
         "service": "Trust Audit API",
+        "tagline": "the honesty gate for agent-to-agent claims — verify a peer's number "
+                   "(accuracy, backtest ROI, win-rate, confidence) before you trust or act on it",
         "description": "POST /audit with any subset of {split, predictions, features, metrics}; "
                        "each present block runs its check, absent blocks are skipped. Returns a "
                        "trust_score (0-100) + verdict (TRUSTWORTHY/INCONCLUSIVE/NOT_TRUSTWORTHY).",
