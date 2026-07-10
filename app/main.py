@@ -78,7 +78,7 @@ async def _unexpected_handler(_: Request, __: Exception) -> JSONResponse:
     )
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> dict:
     return {"status": "ok"}
 

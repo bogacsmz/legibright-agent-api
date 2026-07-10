@@ -10,6 +10,12 @@ def test_health():
     assert r.json() == {"status": "ok"}
 
 
+def test_health_head_returns_200():
+    # UptimeRobot and other monitors ping with HEAD; it must be 200, not 405.
+    r = client.head("/health")
+    assert r.status_code == 200
+
+
 def test_root_is_self_documenting():
     r = client.get("/")
     assert r.status_code == 200

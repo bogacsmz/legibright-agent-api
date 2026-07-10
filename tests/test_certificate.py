@@ -58,6 +58,16 @@ def test_tamper_verdict_invalidates_signature():
     assert "tamper" in vbody["reason"].lower() or "signature" in vbody["reason"].lower()
 
 
+def test_structurally_broken_claim_is_200_valid_false():
+    # A certificate whose `claim` is not an object is a normal answer
+    # (valid: false), not a 400 — matches the SKILL.md contract.
+    for broken in ("not-a-claim", None, 123, ["a"]):
+        v = client.post("/verify", json={"claim": broken, "signature": "ab",
+                                          "algorithm": "Ed25519", "public_key": "cd"})
+        assert v.status_code == 200, broken
+        assert v.json()["valid"] is False, broken
+
+
 def test_forged_signer_is_rejected():
     r = client.post("/audit", json=_METRICS_NOT_TRUSTWORTHY)
     cert = r.json()["certificate"]

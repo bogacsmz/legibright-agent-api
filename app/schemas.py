@@ -91,7 +91,7 @@ class VerifyRequest(BaseModel):
     fields are allowed so a caller can pass a certificate through unmodified
     even if it carries additional metadata."""
     model_config = ConfigDict(extra="allow")
-    claim: dict[str, Any] | None = None
+    claim: Any = None
     content_id: str | None = None
     signature: str | None = None
     algorithm: str | None = None
